@@ -37,22 +37,22 @@ def is_cdna():
                                                                                    'gfx90a', 'gfx908')
 
 
-def naive_softmax(x):
+def naive_softmax(x, dim=-1):
     """Compute row-wise softmax of X using native pytorch
 
     We subtract the maximum element in order to avoid overflows. Softmax is invariant to
     this shift.
     """
     # read  MN elements ; write M  elements
-    x_max = x.max(dim=1)[0]
+    x_max = x.max(dim=dim, keepdim=True)[0]
     # read MN + M elements ; write MN elements
-    z = x - x_max[:, None]
+    z = x - x_max
     # read  MN elements ; write MN elements
     numerator = torch.exp(z)
     # read  MN elements ; write M  elements
-    denominator = numerator.sum(dim=1)
+    denominator = numerator.sum(dim=dim, keepdim=True)
     # read MN + M elements ; write MN elements
-    ret = numerator / denominator[:, None]
+    ret = numerator / denominator
     # in total: read 5MN + 2M elements ; wrote 3MN + 2M elements
     return ret
 
@@ -132,7 +132,7 @@ def softmax(x):
     # way so you don't have to come up with manual heuristics yourself.
     num_warps = 8
 
-    # Number of software piepling stages.
+    # Number of software pipeling stages.
     num_stages = 4 if SIZE_SMEM > 200000 else 2
 
     # Allocate output
@@ -228,7 +228,7 @@ def benchmark(M, N, provider):
     stream = torch.cuda.Stream()
     torch.cuda.set_stream(stream)
     if provider == 'torch':
-        ms = triton.testing.do_bench(lambda: torch.softmax(x, axis=-1))
+        ms = triton.testing.do_bench(lambda: torch.softmax(x, dim=-1))
     if provider == 'triton':
         ms = triton.testing.do_bench(lambda: softmax(x))
     gbps = lambda ms: 2 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
