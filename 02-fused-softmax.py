@@ -36,8 +36,8 @@ def is_cdna():
     return is_hip() and triton.runtime.driver.active.get_current_target().arch in ('gfx940', 'gfx941', 'gfx942',
                                                                                    'gfx90a', 'gfx908')
 
-
-def naive_softmax(x, dim=-1):
+@torch.jit.script
+def naive_softmax(x: torch.Tensor, dim: int = -1):
     """Compute row-wise softmax of X using native pytorch
 
     We subtract the maximum element in order to avoid overflows. Softmax is invariant to
