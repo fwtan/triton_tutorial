@@ -262,12 +262,33 @@ def _seeded_dropout_2d(x_ptr, output_ptr, seed_ptr, M, N, p, x_row_stride, outpu
         tl.store(output_ptrs, output, mask=mask)
 
 
+dropout_kernels = {}
 def seeded_dropout_2d(x, p, seed):
     n_rows, n_cols = x.shape
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
     y = torch.empty_like(x)
-    grid = lambda meta: (triton.cdiv(n_rows * n_cols, meta['BLOCK_SIZE']), )
-    _seeded_dropout_2d[grid](x, y, seed, n_rows, n_cols, p, x.stride(0), y.stride(0), BLOCK_SIZE=BLOCK_SIZE)
+    num_warps = 1
+
+    kernel, num_programs = dropout_kernels.get(BLOCK_SIZE, (None, 0))
+    if kernel is None:
+        device = torch.cuda.current_device()
+        properties = driver.active.utils.get_device_properties(device)
+        NUM_SM = properties["multiprocessor_count"]
+        NUM_REGS = properties["max_num_regs"]
+        SIZE_SMEM = properties["max_shared_mem"]
+        WARP_SIZE = properties["warpSize"]
+        kernel = _seeded_dropout_2d.warmup(x, y, seed, n_rows, n_cols, p, x.stride(0), y.stride(0), BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, grid=(1, ))
+        kernel._init_handles()
+        n_regs = kernel.n_regs
+        size_smem = kernel.metadata.shared
+        occupancy = NUM_REGS // (n_regs * WARP_SIZE * num_warps)
+        if size_smem > 0:
+            occupancy = min(occupancy, SIZE_SMEM // size_smem)
+        num_programs = NUM_SM * occupancy
+        dropout_kernels[BLOCK_SIZE] = (kernel, num_programs)
+
+    num_programs = min(num_programs, n_rows)
+    kernel[(num_programs, 1, 1)](x, y, seed, n_rows, n_cols, p, x.stride(0), y.stride(0))
     return y
 #########################################################################################
 
@@ -354,6 +375,6 @@ if __name__ == "__main__":
 
     print(
         tabulate.tabulate([
-            ["input (row == 0)"] + x[0].tolist(),
-            ["output (row == 0)"] + output[0].tolist(),
+            ["input (row == 0)"] + x[-1].tolist(),
+            ["output (row == 0)"] + output[-1].tolist(),
         ]))
